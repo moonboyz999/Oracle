@@ -3,6 +3,8 @@ import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
 import { Progress } from "./ui/progress";
 import { useApp } from "../lib/AppContext";
+import { getHostelRoomData, getActiveAlerts } from "../lib/smartPlugAPI";
+import { useState, useEffect } from "react";
 import logo from "figma:asset/319df5b2d19a5da3f80d1835660cd5b1915402d0.png";
 
 interface Room {
@@ -20,7 +22,8 @@ interface DashboardScreenProps {
   onAlertClick: () => void;
 }
 
-const rooms: Room[] = [
+// Mock data as fallback
+const fallbackRooms: Room[] = [
   { id: "1", number: "Room 101", status: "normal", currentUsage: 2.4, percentage: 45, warningCount: 0 },
   { id: "2", number: "Room 102", status: "normal", currentUsage: 1.8, percentage: 35, warningCount: 1 },
   { id: "3", number: "Room 103", status: "warning", currentUsage: 4.2, percentage: 75, detectedDevice: "electricIron", warningCount: 3 },
@@ -31,10 +34,44 @@ const rooms: Room[] = [
   { id: "8", number: "Room 108", status: "normal", currentUsage: 2.0, percentage: 38, warningCount: 1 },
 ];
 
-const activeAlerts = 3;
-
 export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenProps) {
   const { t } = useApp();
+  const [rooms, setRooms] = useState<Room[]>(fallbackRooms);
+  const [activeAlerts, setActiveAlerts] = useState(3);
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+
+  // Load real data from smart plugs
+  useEffect(() => {
+    const loadRoomData = async () => {
+      try {
+        setIsLoading(true);
+        console.log('🔌 Loading real smart plug data...');
+        
+        const [roomData, alertsCount] = await Promise.all([
+          getHostelRoomData(),
+          getActiveAlerts()
+        ]);
+        
+        setRooms(roomData);
+        setActiveAlerts(alertsCount);
+        setLastUpdate(new Date());
+        console.log('✅ Smart plug data loaded successfully');
+      } catch (error) {
+        console.error('❌ Error loading smart plug data:', error);
+        // Keep fallback data
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadRoomData();
+    
+    // Auto-refresh every 30 seconds
+    const interval = setInterval(loadRoomData, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
   const totalUsage = rooms.reduce((sum, room) => sum + room.currentUsage, 0);
   const averageUsage = totalUsage / rooms.length;
 
@@ -74,13 +111,26 @@ export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenPr
               <h1 className="text-2xl">{t('hostelAdmin')}</h1>
             </div>
           </div>
-          <button 
-            onClick={onAlertClick}
-            className="relative p-3 bg-white/20 rounded-2xl hover:bg-white/30 transition-colors"
-          >
-            <Bell className="w-6 h-6" />
-            {activeAlerts > 0 && (
-              <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs w-5 h-5 rounded-full flex items-center justify-center">
+          <div className="flex items-center space-x-4">
+            <button 
+              onClick={onAlertClick}
+              className="relative p-3 bg-white/20 rounded-2xl hover:bg-white/30 transition-colors"
+            >
+              <Bell className="w-6 h-6" />
+              {activeAlerts > 0 && (
+                <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs w-5 h-5 rounded-full flex items-center justify-center">
+                  {activeAlerts}
+                </span>
+              )}
+            </button>
+            <div className="flex items-center space-x-2 bg-white/20 rounded-xl px-3 py-2">
+              <div className={`w-2 h-2 rounded-full ${isLoading ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'}`}></div>
+              <span className="text-xs text-primary-foreground/70">
+                {isLoading ? 'Updating...' : `Live • ${lastUpdate.toLocaleTimeString()}`}
+              </span>
+            </div>
+          </div>
+        </div>
                 {activeAlerts}
               </span>
             )}
