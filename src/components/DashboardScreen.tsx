@@ -1,10 +1,16 @@
-import { Bell, TrendingUp, Activity } from "lucide-react";
+import { Bell, TrendingUp, Activity, Plus, X } from "lucide-react";
 import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
 import { Progress } from "./ui/progress";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "./ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { useApp } from "../lib/AppContext";
-import { getHostelRoomData, getActiveAlerts } from "../lib/smartPlugAPI";
+import { getHostelRoomData, getActiveAlerts, smartPlugAPI, SmartPlugDevice } from "../lib/smartPlugAPI";
 import { useState, useEffect } from "react";
+import { toast } from "sonner";
 import logo from "figma:asset/319df5b2d19a5da3f80d1835660cd5b1915402d0.png";
 
 interface Room {
@@ -40,6 +46,14 @@ export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenPr
   const [activeAlerts, setActiveAlerts] = useState(3);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdate, setLastUpdate] = useState<Date>(new Date());
+  
+  // Room Management State
+  const [showAddRoomModal, setShowAddRoomModal] = useState(false);
+  const [availableDevices, setAvailableDevices] = useState<SmartPlugDevice[]>([]);
+  const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+  const [formRoomNumber, setFormRoomNumber] = useState('');
+  const [formSelectedDevice, setFormSelectedDevice] = useState('');
+  const [isCreatingRoom, setIsCreatingRoom] = useState(false);
 
   // Load real data from smart plugs
   useEffect(() => {
@@ -74,6 +88,102 @@ export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenPr
 
   const totalUsage = rooms.reduce((sum, room) => sum + room.currentUsage, 0);
   const averageUsage = totalUsage / rooms.length;
+
+  // Room Management Functions
+  const handleAddRoom = async () => {
+    try {
+      setIsLoadingDevices(true);
+      console.log('🔌 Loading available smart devices...');
+      
+      const devices = await smartPlugAPI.getDevices();
+      // Filter out devices that are already assigned to rooms
+      const assignedDeviceIds = rooms.map(room => room.id);
+      const unassignedDevices = devices.filter(device => !assignedDeviceIds.includes(device.id));
+      
+      setAvailableDevices(unassignedDevices);
+      setShowAddRoomModal(true);
+      console.log(`✅ Found ${unassignedDevices.length} available devices`);
+    } catch (error) {
+      console.error('❌ Error loading devices:', error);
+      toast.error('Failed to load available devices');
+    } finally {
+      setIsLoadingDevices(false);
+    }
+  };
+
+  const handleSaveRoom = async () => {
+    // Validation
+    if (!formRoomNumber.trim()) {
+      toast.error('Room number is required');
+      return;
+    }
+    
+    if (!formSelectedDevice) {
+      toast.error('Please select a smart device');
+      return;
+    }
+    
+    // Check if room number already exists
+    if (rooms.some(room => room.number.toLowerCase().includes(formRoomNumber.trim().toLowerCase()))) {
+      toast.error('Room number already exists');
+      return;
+    }
+
+    try {
+      setIsCreatingRoom(true);
+      
+      // Find the selected device
+      const selectedDevice = availableDevices.find(device => device.id === formSelectedDevice);
+      if (!selectedDevice) {
+        toast.error('Selected device not found');
+        return;
+      }
+
+      // Create new room with smart device
+      const newRoom: Room = {
+        id: selectedDevice.id,
+        number: `Room ${formRoomNumber.trim()}`,
+        status: selectedDevice.currentPower > 5000 ? 'alert' : 
+                selectedDevice.currentPower > 3000 ? 'warning' : 'normal',
+        currentUsage: Number((selectedDevice.currentPower / 1000).toFixed(1)),
+        percentage: Math.min(Math.round((selectedDevice.currentPower / 6000) * 100), 100),
+        detectedDevice: selectedDevice.currentPower > 5000 ? 'High Power Device' : undefined,
+        warningCount: selectedDevice.currentPower > 3000 ? 1 : 0
+      };
+
+      // Add to rooms list
+      setRooms(prev => [...prev, newRoom]);
+      
+      // Reset form and close modal
+      resetRoomForm();
+      setShowAddRoomModal(false);
+      
+      console.log('Room added successfully:', newRoom.number);
+      toast.success(`${newRoom.number} added successfully!`, {
+        description: `Connected to device: ${selectedDevice.name}`,
+        duration: 4000
+      });
+      
+    } catch (error) {
+      console.error('Error adding room:', error);
+      toast.error('Error adding room', {
+        description: 'Please try again.',
+        duration: 4000
+      });
+    } finally {
+      setIsCreatingRoom(false);
+    }
+  };
+
+  const resetRoomForm = () => {
+    setFormRoomNumber('');
+    setFormSelectedDevice('');
+  };
+
+  const handleCloseRoomModal = () => {
+    resetRoomForm();
+    setShowAddRoomModal(false);
+  };
 
   const getStatusColor = (status: Room["status"]) => {
     switch (status) {
@@ -182,9 +292,20 @@ export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenPr
         {/* Room List */}
         <div className="flex items-center justify-between mb-4">
           <h3>{t('roomStatus')}</h3>
-          <Badge variant="secondary" className="bg-secondary/50 text-primary border-secondary">
-            {rooms.length} {t('rooms')}
-          </Badge>
+          <div className="flex items-center gap-3">
+            <Badge variant="secondary" className="bg-secondary/50 text-primary border-secondary">
+              {rooms.length} {t('rooms')}
+            </Badge>
+            <Button
+              onClick={handleAddRoom}
+              size="sm"
+              className="bg-[#08796B] hover:bg-[#065D52] text-white"
+              disabled={isLoadingDevices}
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              {isLoadingDevices ? 'Loading...' : 'Add Room'}
+            </Button>
+          </div>
         </div>
 
         <div className="space-y-3">
@@ -225,6 +346,85 @@ export function DashboardScreen({ onRoomClick, onAlertClick }: DashboardScreenPr
           ))}
         </div>
       </div>
+
+      {/* Add Room Modal */}
+      <Dialog open={showAddRoomModal} onOpenChange={handleCloseRoomModal}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Plus className="w-5 h-5 text-[#08796B]" />
+              Add New Room
+            </DialogTitle>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="roomNumber">Room Number</Label>
+              <Input
+                id="roomNumber"
+                type="text"
+                placeholder="Enter room number (e.g., 101, 205)"
+                value={formRoomNumber}
+                onChange={(e) => setFormRoomNumber(e.target.value)}
+                className="bg-gray-50 border-gray-200"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="smartDevice">Smart Device</Label>
+              <Select value={formSelectedDevice} onValueChange={setFormSelectedDevice}>
+                <SelectTrigger className="bg-gray-50 border-gray-200">
+                  <SelectValue placeholder="Select a smart device" />
+                </SelectTrigger>
+                <SelectContent>
+                  {availableDevices.length === 0 ? (
+                    <SelectItem value="no-devices" disabled>
+                      No available devices
+                    </SelectItem>
+                  ) : (
+                    availableDevices.map((device) => (
+                      <SelectItem key={device.id} value={device.id}>
+                        <div className="flex items-center justify-between w-full">
+                          <span>{device.name}</span>
+                          <div className="flex items-center gap-2 ml-2">
+                            <div className={`w-2 h-2 rounded-full ${device.online ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                            <span className="text-xs text-gray-500">
+                              {(device.currentPower / 1000).toFixed(1)}kW
+                            </span>
+                          </div>
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
+              {formSelectedDevice && (
+                <p className="text-xs text-gray-500">
+                  Selected device will be assigned to this room for monitoring
+                </p>
+              )}
+            </div>
+          </div>
+          
+          <div className="flex gap-3">
+            <Button 
+              variant="outline" 
+              onClick={handleCloseRoomModal}
+              className="flex-1"
+              disabled={isCreatingRoom}
+            >
+              Cancel
+            </Button>
+            <Button 
+              onClick={handleSaveRoom}
+              className="flex-1 bg-[#08796B] hover:bg-[#065D52] text-white"
+              disabled={isCreatingRoom || !formRoomNumber.trim() || !formSelectedDevice}
+            >
+              {isCreatingRoom ? 'Adding...' : 'Add Room'}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
